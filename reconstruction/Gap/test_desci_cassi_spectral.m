@@ -1,0 +1,122 @@
+%TEST_DESCI_CASSI Test decompress snapshot compressive imaging (DeSCI) for
+%simulated coded aperture snapshot spectral imaging (CASSI) `toy` dataset.
+% Reference
+%   [1] Y. Liu, X. Yuan, J. Suo, D.J. Brady, and Q. Dai, Rank Minimization
+%       for Snapshot Compressive Imaging, IEEE Trans. Pattern Anal. Mach.
+%       Intell. (TPAMI), DOI:10.1109/TPAMI.2018.2873587, 2018.
+%   [2] X. Yuan, Generalized alternating projection based total variation
+%       minimization for compressive sensing, in Proc. IEEE Int. Conf.
+%       Image Process. (ICIP), pp. 2539-2543, 2016.
+% Dataset
+%   `toy` from the CAVE multispectral image database
+%     (http://www1.cs.columbia.edu/CAVE/databases/multispectral/).
+%   `bird` from the multiframe CASSI system [3] captured in [4].
+%     [3] D. Kittle, K. Choi, A. Wagadarikar, and D. J. Brady, Multiframe
+%         image estimation for coded aperture snapshot spectral imagers,
+%         Appl. Opt., vol. 49, no. 36, pp. 6824-6833, 2010.
+%     [4] A. Rajwade, D. Kittle, T.-H. Tsai, D. Brady, and L. Carin, Coded
+%         Hyperspectral Imaging and Blind Compressive Sensing, SIAM J. on
+%         Imag. Sci., vol. 6, no. 2, pp. 782-812, 2013.
+% Contact
+%   Xin Yuan, Bell Labs, xyuan@bell-labs.com, initial version Jul 2, 2015.
+%   Yang Liu, Tsinghua University, y-liu16@mails.tsinghua.edu.cn, last
+%     update Dec 17, 2018.
+%   See also GAPDENOISE_CACTI, GAPDENOISE.
+%clear; clc;
+% close all
+% [0] environment configuration
+addpath(genpath('./algorithms')); % algorithms
+addpath(genpath('./packages')); % packages
+addpath(genpath('./utils')); % utilities
+
+addpath(genpath('C:\Users\nelson\OneDrive\Documenten\Spectral-polarization-main\polarization=4-bands=12\Simeng_ball'));
+
+datasetdir = './dataset'; % dataset
+resultdir  = './results'; % results
+
+% [1] load dataset
+para.type   = 'cacti'; % type of dataset, cassi or cacti
+para.name   = 'kobe'; % name of dataset
+para.number =  32; % number of frames in the dataset
+
+datapath = sprintf('%s/%s%d_%s.mat',datasetdir,para.name,...
+    para.number,para.type);
+
+para.nframe =   1; % number of coded frames in this test
+para.MAXB   = 255;
+
+addpath(genpath('C:\Users\nelson\OneDrive\Desktop\MSFA-DOE-main_CASSI\dataset'));
+%addpath(genpath('C:\Users\nelson\Downloads\DeSCI-master\DeSCI-master\kernel'));
+
+for l=1:1
+    id = 1;%id = 1:1;
+    alldataset= {'balloons'};% put all your dataset names
+    dataset = alldataset{id(l)};
+    dataset = dataset +"_ms.mat";
+    load(dataset)
+    K = 31;
+    N = 256;
+    hyperimg = imresize(hyperimg,[N N]);
+    X = 255*mat2gray(hyperimg);%data(:,:,id);
+    %load("kernel"+num2str(K)+".mat");
+    gdmd2 = rand(N,N,K)< (0.5);%
+    [M,N,~] = size(gdmd2);
+
+    X = mat2gray(X);
+
+    orig = X;
+    mask = gdmd2;
+
+    [nrow,ncol,nmask] = size(mask);
+    nframe = para.nframe; % number of coded frames in this test
+    MAXB = para.MAXB;
+
+    % [2] apply GAP-Denoise for reconstruction
+    para.Mfunc  = @(z) A_xy(z,mask);
+    para.Mtfunc = @(z) At_xy_nonorm(z,mask);
+
+    para.Phisum = sum(mask.^2,3);
+    para.Phisum(para.Phisum==0) = 1;
+    % common parameters
+    para.lambda   =     1; % correction coefficiency
+    para.acc      =     1; % enable GAP-acceleration
+    para.flag_iqa = false; % disable image quality assessments in iterations
+
+    %% [2.1] GAP-TV, ICIP'16
+    para.denoiser = 'tv'; % TV denoising
+    para.maxiter  = 300; % maximum iteration
+    para.tvweight =  15; % weight for TV denoising
+    para.tviter   =  15; % number of iteration for TV denoising
+
+    for i=1:K
+        tempo(:,:,i) = 255.*orig(:,:,i).*mask(:,:,i);
+    end
+    meas1 = sum(tempo,3);
+    meas = meas1;
+
+    [vgaptv,psnr_gaptv,ssim_gaptv,tgaptv] = ...
+        gapdenoise_cacti(mask,meas,orig,[],para);
+
+    [M,N1,L] = size(vgaptv);
+    Xrec = zeros(M,N1,L);
+    ground = zeros(M,N1,L);
+
+    for i=1:L
+        Xrec(:,:,i) =  vgaptv(:,:,i);
+        ground(:,:,i) =  orig(:,:,i);
+        temp = Xrec(:,:,i) < 0;
+        Xrec(:,:,i) = Xrec(:,:,i).*~temp;
+    end
+
+    Xrec = mat2gray(Xrec);
+    for i=1:L
+        p(i)= psnr(ground(:,:,i),Xrec(:,:,i));
+        s(i)= ssim(ground(:,:,i),Xrec(:,:,i));
+    end
+    pt(l,1) = mean(p);
+    st(l,1) = mean(s);
+    fprintf('GAP-%s mean PSNR %2.2f dB, mean SSIM %.4f, total time % 4.1f s.\n',...
+        upper(para.denoiser),mean(pt),mean(st),tgaptv);
+end
+
+%save("metrics","pt","st")
